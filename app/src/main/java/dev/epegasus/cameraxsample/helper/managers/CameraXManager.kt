@@ -132,11 +132,6 @@ class CameraXManager(private val context: Context) {
         }
 
         // Initial Image Capture
-        imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setFlashMode(ImageCapture.FLASH_MODE_ON)
-            .setTargetAspectRatio(AspectRatio.RATIO_16_9)
-            .build()
         if (cameraAspectRatio == CameraAspectRatio.FULL_SCREEN) {
             imageCapture = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
