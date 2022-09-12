@@ -4,12 +4,15 @@ import android.animation.Animator
 import android.content.ContentValues
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
+import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -19,6 +22,7 @@ import androidx.camera.view.PreviewView
 import androidx.constraintlayout.utils.widget.ImageFilterView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
+import androidx.core.net.toFile
 import androidx.lifecycle.LifecycleOwner
 import dev.epegasus.cameraxsample.helper.enums.CameraAspectRatio
 import dev.epegasus.cameraxsample.helper.interfaces.CameraXActions
@@ -260,6 +264,11 @@ class CameraXManager(private val context: Context) {
                 val msg = "Photo capture succeeded: ${output.savedUri}"
                 Log.d(TAG, "Photo Capture: onImageSaved: $msg")
                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+
+                val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(output.savedUri?.toFile()?.extension)
+                MediaScannerConnection.scanFile(context, arrayOf(output.savedUri?.toFile()?.absolutePath), arrayOf(mimeType)) { _, uri: Uri? ->
+                    Log.d(TAG, "Image capture scanned into media store: $uri")
+                }
             }
         })
     }
