@@ -16,9 +16,7 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
-
-        </androidx.camera.view.PreviewView>
+            app:layout_constraintTop_toTopOf="parent"/>
 
         <androidx.constraintlayout.utils.widget.ImageFilterView
             android:id="@+id/ifv_rotate_Home"
