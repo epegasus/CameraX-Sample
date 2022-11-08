@@ -1,4 +1,4 @@
-package dev.epegasus.cameraxsample.helper.enums
+package dev.epegasus.camera.enums
 
 enum class CameraAspectRatio(type: String) {
     ASPECT_RATIO_4_3("4:3"),

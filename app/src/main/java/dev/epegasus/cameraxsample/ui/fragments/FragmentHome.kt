@@ -10,12 +10,12 @@ import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.core.content.ContextCompat
+import dev.epegasus.camera.CameraXManager
+import dev.epegasus.camera.interfaces.CameraXActions
 import dev.epegasus.cameraxsample.R
 import dev.epegasus.cameraxsample.databinding.FragmentHomeBinding
 import dev.epegasus.cameraxsample.helper.extensions.FragmentExtensions.popFrom
 import dev.epegasus.cameraxsample.helper.extensions.FragmentExtensions.showToast
-import dev.epegasus.cameraxsample.helper.interfaces.CameraXActions
-import dev.epegasus.cameraxsample.helper.managers.CameraXManager
 
 @ExperimentalCamera2Interop
 class FragmentHome : BaseFragment<FragmentHomeBinding>(), CameraXActions {
@@ -67,7 +67,7 @@ class FragmentHome : BaseFragment<FragmentHomeBinding>(), CameraXActions {
     }
 
     private fun setCameraConfigs() {
-        cameraXManager.let{
+        cameraXManager.let {
             it.init(binding.pvCameraHome, this, this)
             it.setRingView(binding.ifvFocusRingHome)
             it.startCameraPreview()

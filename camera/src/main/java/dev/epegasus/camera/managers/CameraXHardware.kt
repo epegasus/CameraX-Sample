@@ -1,4 +1,4 @@
-package dev.epegasus.cameraxsample.helper.managers
+package dev.epegasus.camera.managers
 
 import android.content.Context
 import android.content.pm.PackageManager

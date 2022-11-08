@@ -1,4 +1,4 @@
-package dev.epegasus.cameraxsample.helper.managers
+package dev.epegasus.camera
 
 import android.animation.Animator
 import android.content.ContentValues
@@ -14,9 +14,17 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.webkit.MimeTypeMap
 import android.widget.Toast
-import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
-import androidx.camera.core.*
+import androidx.camera.core.AspectRatio
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraInfoUnavailableException
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.constraintlayout.utils.widget.ImageFilterView
@@ -24,11 +32,12 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.core.net.toFile
 import androidx.lifecycle.LifecycleOwner
-import dev.epegasus.cameraxsample.helper.enums.CameraAspectRatio
-import dev.epegasus.cameraxsample.helper.interfaces.CameraXActions
+import dev.epegasus.camera.enums.CameraAspectRatio
+import dev.epegasus.camera.interfaces.CameraXActions
+import dev.epegasus.camera.managers.CameraXHardware
 import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -216,7 +225,7 @@ class CameraXManager(private val context: Context) {
     private fun selectExternalOrBestCamera(): CameraSelector {
         cameraProvider?.let { provider ->
             val cameraInfoList = provider.availableCameraInfos.map {
-                Camera2CameraInfo.from(it)
+                androidx.camera.camera2.interop.Camera2CameraInfo.from(it)
             }.sortedByDescending {
                 // HARDWARE_LEVEL is Int type, with the order of:
                 // LEGACY < LIMITED < FULL < LEVEL_3 < EXTERNAL
@@ -227,11 +236,12 @@ class CameraXManager(private val context: Context) {
                     CameraSelector.Builder().addCameraFilter {
                         it.filter { camInfo ->
                             // cameraInfoList[0] is either EXTERNAL or best built-in camera
-                            val thisCamId = Camera2CameraInfo.from(camInfo).cameraId
+                            val thisCamId = androidx.camera.camera2.interop.Camera2CameraInfo.from(camInfo).cameraId
                             thisCamId == cameraInfoList[0].cameraId
                         }
                     }.build()
                 }
+
                 else -> CameraSelector.DEFAULT_FRONT_CAMERA
             }
         } ?: return CameraSelector.DEFAULT_FRONT_CAMERA
@@ -296,6 +306,7 @@ class CameraXManager(private val context: Context) {
                 camera?.cameraControl?.startFocusAndMetering(action)
                 return true
             }
+
             else -> return false
         }
     }
@@ -314,7 +325,7 @@ class CameraXManager(private val context: Context) {
             it.alpha = 1f
 
             // Animate the focus ring to disappear
-            it.animate().setStartDelay(500).setDuration(300).alpha(0f).setListener(object : Animator.AnimatorListener {
+            it.animate().setStartDelay(500).setDuration(600).alpha(0f).setListener(object : Animator.AnimatorListener {
                 override fun onAnimationStart(animation: Animator) {
 
                 }
