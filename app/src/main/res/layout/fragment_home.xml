@@ -10,7 +10,7 @@
 
         <androidx.camera.view.PreviewView
             android:id="@+id/pv_camera_Home"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="0dp"
             android:keepScreenOn="true"
             app:layout_constraintBottom_toBottomOf="parent"

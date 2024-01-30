@@ -1,19 +1,17 @@
 package dev.epegasus.camera
 
 import android.animation.Animator
-import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
 import android.media.MediaScannerConnection
-import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
 import android.util.Log
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import android.webkit.MimeTypeMap
-import android.widget.Toast
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
@@ -30,24 +28,36 @@ import androidx.camera.view.PreviewView
 import androidx.constraintlayout.utils.widget.ImageFilterView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
-import androidx.core.net.toFile
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
 import dev.epegasus.camera.enums.CameraAspectRatio
 import dev.epegasus.camera.interfaces.CameraXActions
 import dev.epegasus.camera.managers.CameraXHardware
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
-import java.text.SimpleDateFormat
-import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 typealias LumaListener = (luma: Double) -> Unit
 
 private const val TAG = "MyTag"
-private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
+
+/**
+ * @param cameraFacing
+ *          CameraSelector.DEFAULT_FRONT_CAMERA
+ *          CameraSelector.DEFAULT_BACK_CAMERA
+ * @param flashMode
+ *          ImageCapture.FLASH_MODE_OFF
+ *          ImageCapture.FLASH_MODE_ON
+ */
 
 @ExperimentalCamera2Interop
-class CameraXManager(private val context: Context) {
+class CameraXManager(private val context: Context, private var cameraFacing: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA, private var flashMode: Int = ImageCapture.FLASH_MODE_OFF) {
 
     // Views
     private lateinit var previewView: PreviewView
@@ -55,7 +65,7 @@ class CameraXManager(private val context: Context) {
     private lateinit var lifecycleOwner: LifecycleOwner
 
     private var ringView: ImageFilterView? = null
-    private var cameraAspectRatio = CameraAspectRatio.FULL_SCREEN
+    private var cameraAspectRatio = CameraAspectRatio.ASPECT_RATIO_4_3
 
     private val cameraXHardware by lazy { CameraXHardware(context, cameraProvider) }
 
@@ -63,11 +73,10 @@ class CameraXManager(private val context: Context) {
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var cameraProvider: ProcessCameraProvider? = null
-    private var cameraSelector: CameraSelector? = null
     private var canRotate: Boolean = false
 
-    private lateinit var cameraExecutor: ExecutorService
-    private lateinit var scaleGestureDetector: ScaleGestureDetector
+    private var cameraExecutor: ExecutorService? = null
+    private var scaleGestureDetector: ScaleGestureDetector? = null
 
     fun init(previewView: PreviewView, lifecycleOwner: LifecycleOwner, cameraXActions: CameraXActions) {
         this.previewView = previewView
@@ -88,6 +97,11 @@ class CameraXManager(private val context: Context) {
 
     fun setAspectRatio(cameraAspectRatio: CameraAspectRatio) {
         this.cameraAspectRatio = cameraAspectRatio
+    }
+
+    fun toggleFlashMode(flashMode: Int) {
+        this.flashMode = flashMode
+        imageCapture?.flashMode = flashMode
     }
 
     /**
@@ -125,7 +139,7 @@ class CameraXManager(private val context: Context) {
             return
         }
         cameraProviderFuture.addListener({
-            bindPreview(false)
+            bindPreview()
         }, ContextCompat.getMainExecutor(context))
     }
 
@@ -136,33 +150,32 @@ class CameraXManager(private val context: Context) {
      *          3) FLASH_MODE_AUTO          // Will Start in night time (if needed)
      */
 
-    private fun bindPreview(isUpdate: Boolean) {
+    private fun bindPreview() {
         // Used to bind the lifecycle of cameras to the lifecycle owner
-
         // Preview
-        val preview = Preview.Builder().build().also {
-            it.setSurfaceProvider(previewView.surfaceProvider)
-        }
+        val preview = Preview.Builder()
+            .build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
 
         // Initial Image Capture
         if (cameraAspectRatio == CameraAspectRatio.FULL_SCREEN) {
             imageCapture = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                .setFlashMode(ImageCapture.FLASH_MODE_ON)
+                .setFlashMode(flashMode)
                 .build()
             (previewView.layoutParams as ConstraintLayout.LayoutParams).dimensionRatio = null
         } else {
             val ar = if (cameraAspectRatio == CameraAspectRatio.ASPECT_RATIO_4_3) {
                 (previewView.layoutParams as ConstraintLayout.LayoutParams).dimensionRatio = CameraAspectRatio.ASPECT_RATIO_4_3.toString()
                 AspectRatio.RATIO_4_3
-
             } else {
                 (previewView.layoutParams as ConstraintLayout.LayoutParams).dimensionRatio = CameraAspectRatio.ASPECT_RATIO_9_16.toString()
                 AspectRatio.RATIO_16_9
             }
             imageCapture = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                .setFlashMode(ImageCapture.FLASH_MODE_ON)
+                .setFlashMode(flashMode)
                 .setTargetAspectRatio(ar)
                 .build()
         }
@@ -170,13 +183,9 @@ class CameraXManager(private val context: Context) {
         // Enable / Disable Camera Button's enable
         updateCameraSwitchButton()
 
-        // Select front camera as a default
-        if (!isUpdate)
-            cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-
         // Image Analyzer
         val imageAnalyzer = ImageAnalysis.Builder().build().also {
-            it.setAnalyzer(cameraExecutor, LuminosityAnalyzer {
+            it.setAnalyzer(cameraExecutor!!, LuminosityAnalyzer {
                 //Log.d(TAG, "Average luminosity: $luma")
             })
         }
@@ -185,7 +194,7 @@ class CameraXManager(private val context: Context) {
             // Unbind use cases before rebinding
             cameraProvider?.unbindAll()
             // Bind use cases to camera
-            camera = cameraProvider?.bindToLifecycle(lifecycleOwner, cameraSelector!!, preview, imageCapture, imageAnalyzer)
+            camera = cameraProvider?.bindToLifecycle(lifecycleOwner, cameraFacing, preview, imageCapture, imageAnalyzer)
         } catch (ex: Exception) {
             Log.d(TAG, "Use case binding failed : $ex")
         }
@@ -205,17 +214,18 @@ class CameraXManager(private val context: Context) {
 
     fun onCameraRotateFacingClick() {
         if (canRotate) {
-            cameraSelector = if (CameraSelector.DEFAULT_FRONT_CAMERA == cameraSelector)
+            cameraFacing = if (CameraSelector.DEFAULT_FRONT_CAMERA == cameraFacing)
                 selectExternalOrBestCamera()
             else
                 CameraSelector.DEFAULT_FRONT_CAMERA
             rotateCameraFacing()
+            cameraXActions.onRotateClick()
         }
     }
 
     private fun rotateCameraFacing() {
         cameraProvider?.let {
-            bindPreview(true)
+            bindPreview()
         } ?: kotlin.run {
             cameraProvider = ProcessCameraProvider.getInstance(context).get()
             rotateCameraFacing()
@@ -225,7 +235,7 @@ class CameraXManager(private val context: Context) {
     private fun selectExternalOrBestCamera(): CameraSelector {
         cameraProvider?.let { provider ->
             val cameraInfoList = provider.availableCameraInfos.map {
-                androidx.camera.camera2.interop.Camera2CameraInfo.from(it)
+                Camera2CameraInfo.from(it)
             }.sortedByDescending {
                 // HARDWARE_LEVEL is Int type, with the order of:
                 // LEGACY < LIMITED < FULL < LEVEL_3 < EXTERNAL
@@ -236,7 +246,7 @@ class CameraXManager(private val context: Context) {
                     CameraSelector.Builder().addCameraFilter {
                         it.filter { camInfo ->
                             // cameraInfoList[0] is either EXTERNAL or best built-in camera
-                            val thisCamId = androidx.camera.camera2.interop.Camera2CameraInfo.from(camInfo).cameraId
+                            val thisCamId = Camera2CameraInfo.from(camInfo).cameraId
                             thisCamId == cameraInfoList[0].cameraId
                         }
                     }.build()
@@ -247,49 +257,97 @@ class CameraXManager(private val context: Context) {
         } ?: return CameraSelector.DEFAULT_FRONT_CAMERA
     }
 
-    fun takePhoto() {
+    fun takePhoto(myFilesDirectory: String, callback: (isSuccess: Boolean, message: String, file: File) -> Unit) {
         // Get a stable reference of the modifiable image capture use case
+
+        val folder = File(myFilesDirectory)
+        if (!folder.exists()) {
+            folder.mkdir()
+        }
+
         val imageCapture = imageCapture ?: return
 
         // Create time stamped name and MediaStore entry.
-        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(System.currentTimeMillis())
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Sample")
-            }
-        }
+        val picName = "PCM_${System.currentTimeMillis()}.png"
 
+        /*val outputOptions: ImageCapture.OutputFileOptions = if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, picName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P)
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/$myFilesDirectory")
+            }
+            ImageCapture.OutputFileOptions.Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues).build()
+        } else {
+            val path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            val file = File(path, "$myFilesDirectory/$picName.png")
+            file.parentFile?.mkdirs()
+            ImageCapture.OutputFileOptions.Builder(file).build()
+        }*/
+        // Dummy File
+        val file = File(context.cacheDir, picName)
+        file.createNewFile()
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
         // Create output options object which contains file + metadata
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues).build()
 
         // Set up image capture listener, which is triggered after photo has been taken
         imageCapture.takePicture(outputOptions, ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageSavedCallback {
             override fun onError(ex: ImageCaptureException) {
                 Log.d(TAG, "Photo Capture: onError: $ex")
+
+                callback.invoke(false, ex.message ?: "Failed to Save Image", file)
             }
 
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                val msg = "Photo capture succeeded: ${output.savedUri}"
+                val msg = "Photo capture succeeded: Pictures/$myFilesDirectory"
                 Log.d(TAG, "Photo Capture: onImageSaved: $msg")
-                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
 
-                val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(output.savedUri?.toFile()?.extension)
-                MediaScannerConnection.scanFile(context, arrayOf(output.savedUri?.toFile()?.absolutePath), arrayOf(mimeType)) { _, uri: Uri? ->
-                    Log.d(TAG, "Image capture scanned into media store: $uri")
+                val asyncTask = CoroutineScope(Dispatchers.IO).async {
+                    checkForExifRotation(file.toString())
+                }
+
+                CoroutineScope(Dispatchers.Main).launch {
+                    val filePath = asyncTask.await()
+                    //val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(output.savedUri?.toFile()?.extension)
+                    MediaScannerConnection.scanFile(context, arrayOf(output.savedUri?.path), null) { path, _ ->
+                        Log.d(TAG, "Image capture scanned into media store: $path")
+                        callback.invoke(true, msg, File(filePath))
+                    }
                 }
             }
         })
     }
 
+    private fun checkForExifRotation(filePath: String): String {
+        val exif = ExifInterface(filePath)
+        val rotation = when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270
+            else -> 0
+        }
+        val bitmap = BitmapFactory.decodeFile(filePath)
+        val newBitmap = if (rotation != 0) {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(rotation.toFloat()) }, true)
+        } else {
+            bitmap
+        }
+        val fileOutputStream = FileOutputStream(filePath)
+        newBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream)
+        fileOutputStream.close()
+        return filePath
+    }
+
     /* --------------------------------------------------- Touch Listeners --------------------------------------------------- */
 
     fun onPreviewSurfaceListener(event: MotionEvent): Boolean {
-        scaleGestureDetector.onTouchEvent(event)
+        scaleGestureDetector?.onTouchEvent(event)
         when (event.action) {
             MotionEvent.ACTION_DOWN -> return true
             MotionEvent.ACTION_UP -> {
+                if (!this::previewView.isInitialized) {
+                    return false
+                }
                 // Get the MeteringPointFactory from PreviewView
                 val factory = previewView.meteringPointFactory
 
@@ -310,7 +368,6 @@ class CameraXManager(private val context: Context) {
             else -> return false
         }
     }
-
 
     private fun animateFocusRing(x: Float, y: Float) {
         ringView?.let {
@@ -346,7 +403,7 @@ class CameraXManager(private val context: Context) {
     }
 
     fun shutdown() {
-        cameraExecutor.shutdown()
+        cameraExecutor?.shutdown()
     }
 
     private class LuminosityAnalyzer(private val listener: LumaListener) : ImageAnalysis.Analyzer {
